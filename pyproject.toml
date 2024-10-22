@@ -1,1 +1,6 @@
-
+[tool.poetry]
+name = "LR_9_variant2"
+version = "0.1.0"
+description = ""
+authors = ["Identity"]
+readme = "README.md"
