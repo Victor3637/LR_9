@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "LR_9_variant2"
+name = "FileMonitor"
 version = "0.1.0"
 description = ""
 authors = ["Identity"]
