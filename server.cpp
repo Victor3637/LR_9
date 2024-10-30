@@ -12,15 +12,17 @@
 #define DEFAULT_PORT "27015"
 #define MAX_FILENAME_LEN 260
 
-// Функція для отримання інформації про файли з відповідним розширенням
-void GetDirectoryInfoByExtension(const char* extension, char* buffer, size_t bufferSize) {
-    WIN32_FIND_DATAW findFileData;
-    HANDLE hFind;
-    const wchar_t* dirPath = L"E:\\Операційні системи\\Лабораторні\\Лаб.9\\durektoriya1\\*";
+// Шляхи до каталогів
+#define DIRECTORY1 L"E:\\Операційні системи\\Лабораторні\\Лаб.9\\durektoriya1\\*"
+#define DIRECTORY2 L"E:\\Операційні системи\\Лабораторні\\Лаб.9\\durektoriya2\\*"
+#define DIRECTORY3 L"E:\\Операційні системи\\Лабораторні\\Лаб.9\\durektoriya3\\*"
 
-    hFind = FindFirstFileW(dirPath, &findFileData);
+// Функція для отримання інформації про файли з вказаним розширенням у вказаному каталозі
+void GetDirectoryInfoByExtension(const wchar_t* dirPath, const char* extension, char* buffer, size_t bufferSize) {
+    WIN32_FIND_DATAW findFileData;
+    HANDLE hFind = FindFirstFileW(dirPath, &findFileData);
     if (hFind == INVALID_HANDLE_VALUE) {
-        snprintf(buffer, bufferSize, "Не вдалося знайти директорію.");
+        snprintf(buffer, bufferSize, "Не вдалося знайти каталог.");
         return;
     }
 
@@ -30,24 +32,20 @@ void GetDirectoryInfoByExtension(const char* extension, char* buffer, size_t buf
 
     do {
         if (!(findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            // Перетворення імені файлу з WCHAR в звичайний рядок
             char fileName[MAX_FILENAME_LEN];
-            size_t convertedChars = 0;
-            wcstombs_s(&convertedChars, fileName, MAX_FILENAME_LEN, findFileData.cFileName, _TRUNCATE);
+            wcstombs_s(NULL, fileName, findFileData.cFileName, _TRUNCATE);
 
-            // Перевіряємо, чи файл відповідає заданому розширенню
-            if (strstr(fileName, extension) != NULL) {
-                // Додаємо ім'я файлу до списку
+            size_t fileNameLen = strlen(fileName);
+            size_t extLen = strlen(extension);
+            if (strlen(fileName) > strlen(extension) && strcmp(fileName + strlen(fileName) - strlen(extension), extension) == 0) {
                 strncat_s(fileList, DEFAULT_BUFLEN, fileName, _TRUNCATE);
                 strncat_s(fileList, DEFAULT_BUFLEN, "\n", _TRUNCATE);
 
-                // Отримуємо розмір файлу
                 LARGE_INTEGER fileSize;
                 fileSize.LowPart = findFileData.nFileSizeLow;
                 fileSize.HighPart = findFileData.nFileSizeHigh;
                 totalSize += fileSize.QuadPart;
 
-                // Отримуємо дату створення файлу
                 FileTimeToSystemTime(&findFileData.ftCreationTime, &creationTime);
                 char dateStr[50];
                 snprintf(dateStr, sizeof(dateStr),
@@ -61,11 +59,16 @@ void GetDirectoryInfoByExtension(const char* extension, char* buffer, size_t buf
 
     FindClose(hFind);
 
-    // Формуємо підсумкове повідомлення
-    snprintf(buffer, bufferSize,
-        "Сумарний розмір файлів: %llu байт\nСписок файлів:\n%s",
-        totalSize, fileList);
+    if (fileList[0] == '\0') {
+        snprintf(buffer, bufferSize, "Файли з розширенням %s не знайдено.", extension);
+    }
+    else {
+        snprintf(buffer, bufferSize, "Загальний розмір файлів: %llu байт\nСписок файлів:\n%s", totalSize, fileList);
+    }
 }
+
+
+
 
 int __cdecl main(void) {
     SetConsoleCP(1251);
@@ -85,7 +88,7 @@ int __cdecl main(void) {
     // Ініціалізація Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != 0) {
-        printf("WSAStartup failed with error: %d\n", iResult);
+        printf("WSAStartup завершився з помилкою: %d\n", iResult);
         return 1;
     }
 
@@ -94,17 +97,17 @@ int __cdecl main(void) {
     hints.ai_protocol = IPPROTO_TCP;
     hints.ai_flags = AI_PASSIVE;
 
-    // Розв'язування адреси і порту
+    // Прив'язка адреси і порту
     iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
     if (iResult != 0) {
-        printf("getaddrinfo failed with error: %d\n", iResult);
+        printf("getaddrinfo завершився з помилкою: %d\n", iResult);
         WSACleanup();
         return 1;
     }
 
     ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
     if (ListenSocket == INVALID_SOCKET) {
-        printf("socket failed with error: %ld\n", WSAGetLastError());
+        printf("socket завершився з помилкою: %ld\n", WSAGetLastError());
         freeaddrinfo(result);
         WSACleanup();
         return 1;
@@ -112,7 +115,7 @@ int __cdecl main(void) {
 
     iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
     if (iResult == SOCKET_ERROR) {
-        printf("bind failed with error: %d\n", WSAGetLastError());
+        printf("bind завершився з помилкою: %d\n", WSAGetLastError());
         freeaddrinfo(result);
         closesocket(ListenSocket);
         WSACleanup();
@@ -123,7 +126,7 @@ int __cdecl main(void) {
 
     iResult = listen(ListenSocket, SOMAXCONN);
     if (iResult == SOCKET_ERROR) {
-        printf("listen failed with error: %d\n", WSAGetLastError());
+        printf("listen завершився з помилкою: %d\n", WSAGetLastError());
         closesocket(ListenSocket);
         WSACleanup();
         return 1;
@@ -133,7 +136,7 @@ int __cdecl main(void) {
 
     ClientSocket = accept(ListenSocket, NULL, NULL);
     if (ClientSocket == INVALID_SOCKET) {
-        printf("accept failed with error: %d\n", WSAGetLastError());
+        printf("accept завершився з помилкою: %d\n", WSAGetLastError());
         closesocket(ListenSocket);
         WSACleanup();
         return 1;
@@ -141,23 +144,47 @@ int __cdecl main(void) {
 
     closesocket(ListenSocket);
 
-    // Приймаємо розширення файлів від клієнта
+    // Прийом даних від клієнта
     iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
     if (iResult > 0) {
-        recvbuf[iResult] = '\0';  // Закінчуємо рядок
-        printf("Received file extension: %s\n", recvbuf);
+        recvbuf[iResult] = '\0';
+        printf("Отримано повідомлення: %s\n", recvbuf);
 
-        // Отримуємо інформацію про файли з відповідним розширенням
-        GetDirectoryInfoByExtension(recvbuf, sendbuf, sizeof(sendbuf));
+        // Аналіз даних від клієнта: перший символ - номер каталогу, решта - розширення
+        int directoryChoice = recvbuf[0] - '0';  // Перетворення першого символу в число
+        const char* extension = recvbuf + 1;  // Решта рядка - розширення
 
-        // Відправляємо інформацію клієнту
+        // Вибір шляху до каталогу на основі вибору клієнта
+        const wchar_t* dirPath;
+        switch (directoryChoice) {
+        case 1:
+            dirPath = DIRECTORY1;
+            break;
+        case 2:
+            dirPath = DIRECTORY2;
+            break;
+        case 3:
+            dirPath = DIRECTORY3;
+            break;
+        default:
+            snprintf(sendbuf, sizeof(sendbuf), "Неправильний вибір каталогу.");
+            send(ClientSocket, sendbuf, (int)strlen(sendbuf), 0);
+            closesocket(ClientSocket);
+            WSACleanup();
+            return 1;
+        }
+
+        // Отримання інформації про файли у вибраному каталозі
+        GetDirectoryInfoByExtension(dirPath, extension, sendbuf, sizeof(sendbuf));
+
+        // Відправка даних клієнту
         iResult = send(ClientSocket, sendbuf, (int)strlen(sendbuf), 0);
         if (iResult == SOCKET_ERROR) {
-            printf("send failed with error: %d\n", WSAGetLastError());
+            printf("send завершився з помилкою: %d\n", WSAGetLastError());
         }
     }
     else {
-        printf("recv failed with error: %d\n", WSAGetLastError());
+        printf("recv завершився з помилкою: %d\n", WSAGetLastError());
     }
 
     closesocket(ClientSocket);
