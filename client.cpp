@@ -1,5 +1,4 @@
 #define WIN32_LEAN_AND_MEAN
-
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -12,7 +11,7 @@
 #define DEFAULT_PORT "27015"
 
 int __cdecl main() {
-    SetConsoleCP(1251); // Для підтримки кирилиці у ввід/вивід
+    SetConsoleCP(1251);
     SetConsoleOutputCP(1251);
 
     WSADATA wsaData;
@@ -22,10 +21,15 @@ int __cdecl main() {
     int iResult;
     int recvbuflen = DEFAULT_BUFLEN;
 
-    // Буфер для зберігання розширення файлів, яке вводить користувач
-    char fileExtension[50];  // Обмеження на довжину розширення
+    // Буфер для зберігання розширення файлів
+    char fileExtension[50];
     printf("Введіть розширення файлів для пошуку (наприклад, .txt): ");
-    scanf_s("%49s", fileExtension, (unsigned)_countof(fileExtension)); // Безпечний ввід
+    scanf_s("%49s", fileExtension, (unsigned)_countof(fileExtension));
+
+    // Вибір директорії
+    int directoryChoice;
+    printf("Оберіть директорію:\n1. Директорія1\n2. Директорія2\n3. Директорія3\nВведіть номер: ");
+    scanf_s("%d", &directoryChoice);
 
     // Ініціалізація Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -39,7 +43,6 @@ int __cdecl main() {
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
-    // Підключення до локального сервера (localhost)
     char host[] = "127.0.0.1";
     iResult = getaddrinfo(host, DEFAULT_PORT, &hints, &result);
     if (iResult != 0) {
@@ -73,21 +76,25 @@ int __cdecl main() {
         return 1;
     }
 
-    // Надсилаємо введене розширення файлів на сервер
-    iResult = send(ConnectSocket, fileExtension, (int)strlen(fileExtension), 0);
+    // Формуємо повідомлення з вибору директорії та розширення файлу
+    char message[DEFAULT_BUFLEN];
+    snprintf(message, sizeof(message), "%d%s", directoryChoice, fileExtension);
+    
+
+    iResult = send(ConnectSocket, message, (int)strlen(message), 0);
     if (iResult == SOCKET_ERROR) {
         printf("send failed with error: %d\n", WSAGetLastError());
         closesocket(ConnectSocket);
         WSACleanup();
         return 1;
     }
-    printf("File extension sent: %s\n", fileExtension);
+    printf("Directory and file extension sent: %s\n", message);
 
     // Очікуємо відповіді від сервера
     do {
         iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
         if (iResult > 0) {
-            recvbuf[iResult] = '\0';  // Закінчуємо рядок
+            recvbuf[iResult] = '\0';
             printf("Received data:\n%s\n", recvbuf);
         }
         else if (iResult == 0) {
@@ -99,7 +106,6 @@ int __cdecl main() {
         }
     } while (iResult > 0);
 
-    // Завершуємо з'єднання
     closesocket(ConnectSocket);
     WSACleanup();
 
