@@ -5,19 +5,18 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
-#pragma comment (lib, "Ws2_32.lib")
+#pragma comment(lib, "Ws2_32.lib")
 
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
 #define MAX_FILENAME_LEN 260
 
-// Шляхи до каталогів
 #define DIRECTORY1 L"E:\\Операційні системи\\Лабораторні\\Лаб.9\\durektoriya1\\*"
 #define DIRECTORY2 L"E:\\Операційні системи\\Лабораторні\\Лаб.9\\durektoriya2\\*"
 #define DIRECTORY3 L"E:\\Операційні системи\\Лабораторні\\Лаб.9\\durektoriya3\\*"
 
-// Функція для отримання інформації про файли з вказаним розширенням у вказаному каталозі
 void GetDirectoryInfoByExtension(const wchar_t* dirPath, const char* extension, char* buffer, size_t bufferSize) {
     WIN32_FIND_DATAW findFileData;
     HANDLE hFind = FindFirstFileW(dirPath, &findFileData);
@@ -35,9 +34,8 @@ void GetDirectoryInfoByExtension(const wchar_t* dirPath, const char* extension, 
             char fileName[MAX_FILENAME_LEN];
             wcstombs_s(NULL, fileName, findFileData.cFileName, _TRUNCATE);
 
-            size_t fileNameLen = strlen(fileName);
-            size_t extLen = strlen(extension);
-            if (strlen(fileName) > strlen(extension) && strcmp(fileName + strlen(fileName) - strlen(extension), extension) == 0) {
+            if (strlen(fileName) > strlen(extension) &&
+                strcmp(fileName + strlen(fileName) - strlen(extension), extension) == 0) {
                 strncat_s(fileList, DEFAULT_BUFLEN, fileName, _TRUNCATE);
                 strncat_s(fileList, DEFAULT_BUFLEN, "\n", _TRUNCATE);
 
@@ -48,8 +46,7 @@ void GetDirectoryInfoByExtension(const wchar_t* dirPath, const char* extension, 
 
                 FileTimeToSystemTime(&findFileData.ftCreationTime, &creationTime);
                 char dateStr[50];
-                snprintf(dateStr, sizeof(dateStr),
-                    " - Дата створення: %02d/%02d/%04d %02d:%02d\n",
+                snprintf(dateStr, sizeof(dateStr), " - Дата створення: %02d/%02d/%04d %02d:%02d\n",
                     creationTime.wDay, creationTime.wMonth, creationTime.wYear,
                     creationTime.wHour, creationTime.wMinute);
                 strncat_s(fileList, DEFAULT_BUFLEN, dateStr, _TRUNCATE);
@@ -67,8 +64,14 @@ void GetDirectoryInfoByExtension(const wchar_t* dirPath, const char* extension, 
     }
 }
 
-
-
+void WriteToCache(const char* data) {
+    FILE* file;
+    fopen_s(&file, "cash.txt", "a");
+    if (file) {
+        fprintf(file, "%s\n", data);
+        fclose(file);
+    }
+}
 
 int __cdecl main(void) {
     SetConsoleCP(1251);
@@ -85,7 +88,6 @@ int __cdecl main(void) {
     char sendbuf[DEFAULT_BUFLEN];
     int recvbuflen = DEFAULT_BUFLEN;
 
-    // Ініціалізація Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != 0) {
         printf("WSAStartup завершився з помилкою: %d\n", iResult);
@@ -97,7 +99,6 @@ int __cdecl main(void) {
     hints.ai_protocol = IPPROTO_TCP;
     hints.ai_flags = AI_PASSIVE;
 
-    // Прив'язка адреси і порту
     iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
     if (iResult != 0) {
         printf("getaddrinfo завершився з помилкою: %d\n", iResult);
@@ -144,47 +145,43 @@ int __cdecl main(void) {
 
     closesocket(ListenSocket);
 
-    // Прийом даних від клієнта
-    iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
-    if (iResult > 0) {
-        recvbuf[iResult] = '\0';
-        printf("Отримано повідомлення: %s\n", recvbuf);
+    while (1) {
+        iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
+        if (iResult > 0) {
+            recvbuf[iResult] = '\0';
+            printf("Отримано повідомлення: %s\n", recvbuf);
 
-        // Аналіз даних від клієнта: перший символ - номер каталогу, решта - розширення
-        int directoryChoice = recvbuf[0] - '0';  // Перетворення першого символу в число
-        const char* extension = recvbuf + 1;  // Решта рядка - розширення
+            int directoryChoice = recvbuf[0] - '0';
+            const char* extension = recvbuf + 1;
 
-        // Вибір шляху до каталогу на основі вибору клієнта
-        const wchar_t* dirPath;
-        switch (directoryChoice) {
-        case 1:
-            dirPath = DIRECTORY1;
-            break;
-        case 2:
-            dirPath = DIRECTORY2;
-            break;
-        case 3:
-            dirPath = DIRECTORY3;
-            break;
-        default:
-            snprintf(sendbuf, sizeof(sendbuf), "Неправильний вибір каталогу.");
-            send(ClientSocket, sendbuf, (int)strlen(sendbuf), 0);
-            closesocket(ClientSocket);
-            WSACleanup();
-            return 1;
+            const wchar_t* dirPath;
+            switch (directoryChoice) {
+            case 1: dirPath = DIRECTORY1; break;
+            case 2: dirPath = DIRECTORY2; break;
+            case 3: dirPath = DIRECTORY3; break;
+            default:
+                snprintf(sendbuf, sizeof(sendbuf), "Неправильний вибір каталогу.");
+                send(ClientSocket, sendbuf, (int)strlen(sendbuf), 0);
+                continue;
+            }
+
+            GetDirectoryInfoByExtension(dirPath, extension, sendbuf, sizeof(sendbuf));
+            WriteToCache(sendbuf);
+
+            iResult = send(ClientSocket, sendbuf, (int)strlen(sendbuf), 0);
+            if (iResult == SOCKET_ERROR) {
+                printf("send завершився з помилкою: %d\n", WSAGetLastError());
+            }
         }
-
-        // Отримання інформації про файли у вибраному каталозі
-        GetDirectoryInfoByExtension(dirPath, extension, sendbuf, sizeof(sendbuf));
-
-        // Відправка даних клієнту
-        iResult = send(ClientSocket, sendbuf, (int)strlen(sendbuf), 0);
-        if (iResult == SOCKET_ERROR) {
-            printf("send завершився з помилкою: %d\n", WSAGetLastError());
+        else if (iResult == 0) {
+            printf("З'єднання закрито клієнтом\n");
+            break;
         }
-    }
-    else {
-        printf("recv завершився з помилкою: %d\n", WSAGetLastError());
+        else {
+            printf("recv завершився з помилкою: %d\n", WSAGetLastError());
+            break;
+        }
+        Sleep(5000);
     }
 
     closesocket(ClientSocket);
