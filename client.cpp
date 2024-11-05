@@ -4,8 +4,9 @@
 #include <ws2tcpip.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <time.h>
 
-#pragma comment (lib, "Ws2_32.lib")
+#pragma comment(lib, "Ws2_32.lib")
 
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
@@ -21,20 +22,14 @@ int __cdecl main() {
     int iResult;
     int recvbuflen = DEFAULT_BUFLEN;
 
-    // Буфер для зберігання розширення файлів
-    char fileExtension[50];
-    printf("Введіть розширення файлів для пошуку (наприклад, .txt): ");
-    scanf_s("%49s", fileExtension, (unsigned)_countof(fileExtension));
+    srand((unsigned int)time(NULL));
 
-    // Вибір директорії
-    int directoryChoice;
-    printf("Оберіть директорію:\n1. Директорія1\n2. Директорія2\n3. Директорія3\nВведіть номер: ");
-    scanf_s("%d", &directoryChoice);
+    int directories[] = { 1, 2, 3 };
+    const char* extensions[] = { ".txt", ".jpg", ".exe", ".cpp" };
 
-    // Ініціалізація Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != 0) {
-        printf("WSAStartup failed with error: %d\n", iResult);
+        printf("WSAStartup завершився з помилкою: %d\n", iResult);
         return 1;
     }
 
@@ -46,7 +41,7 @@ int __cdecl main() {
     char host[] = "127.0.0.1";
     iResult = getaddrinfo(host, DEFAULT_PORT, &hints, &result);
     if (iResult != 0) {
-        printf("getaddrinfo failed with error: %d\n", iResult);
+        printf("getaddrinfo завершився з помилкою: %d\n", iResult);
         WSACleanup();
         return 1;
     }
@@ -54,7 +49,7 @@ int __cdecl main() {
     for (ptr = result; ptr != NULL; ptr = ptr->ai_next) {
         ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
         if (ConnectSocket == INVALID_SOCKET) {
-            printf("socket failed with error: %ld\n", WSAGetLastError());
+            printf("socket завершився з помилкою: %ld\n", WSAGetLastError());
             WSACleanup();
             return 1;
         }
@@ -71,40 +66,41 @@ int __cdecl main() {
     freeaddrinfo(result);
 
     if (ConnectSocket == INVALID_SOCKET) {
-        printf("Unable to connect to server!\n");
+        printf("Не вдалося підключитися до сервера!\n");
         WSACleanup();
         return 1;
     }
 
-    // Формуємо повідомлення з вибору директорії та розширення файлу
-    char message[DEFAULT_BUFLEN];
-    snprintf(message, sizeof(message), "%d%s", directoryChoice, fileExtension);
-    
+    for (int i = 0; i < 10; i++) {
+        int directoryChoice = directories[rand() % 3];
+        const char* fileExtension = extensions[rand() % 4];
 
-    iResult = send(ConnectSocket, message, (int)strlen(message), 0);
-    if (iResult == SOCKET_ERROR) {
-        printf("send failed with error: %d\n", WSAGetLastError());
-        closesocket(ConnectSocket);
-        WSACleanup();
-        return 1;
-    }
-    printf("Directory and file extension sent: %s\n", message);
+        char message[DEFAULT_BUFLEN];
+        snprintf(message, sizeof(message), "%d%s", directoryChoice, fileExtension);
 
-    // Очікуємо відповіді від сервера
-    do {
+        iResult = send(ConnectSocket, message, (int)strlen(message), 0);
+        if (iResult == SOCKET_ERROR) {
+            printf("send завершився з помилкою: %d\n", WSAGetLastError());
+            closesocket(ConnectSocket);
+            WSACleanup();
+            return 1;
+        }
+        printf("Надіслано запит: директорія %d, розширення %s\n", directoryChoice, fileExtension);
+
         iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
         if (iResult > 0) {
             recvbuf[iResult] = '\0';
-            printf("Received data:\n%s\n", recvbuf);
+            printf("Отримано дані:\n%s\n", recvbuf);
         }
         else if (iResult == 0) {
-            printf("Connection closed\n");
-        }
-        else {
-            printf("recv failed with error: %d\n", WSAGetLastError());
+            printf("З'єднання закрито\n");
             break;
         }
-    } while (iResult > 0);
+        else {
+            printf("recv завершився з помилкою: %d\n", WSAGetLastError());
+            break;
+        }
+    }
 
     closesocket(ConnectSocket);
     WSACleanup();
