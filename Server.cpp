@@ -24,9 +24,10 @@
 std::ofstream LogFile("ServerLogs.txt", std::ios::app);
 
 std::string cacheData;
-std::mutex cacheMutex;
-std::mutex recvMutex;
-std::mutex sendMutex;
+std::mutex cacheMutex;          
+std::mutex logMutex;            
+std::mutex recvMutex;           
+std::mutex sendMutex;           
 std::chrono::time_point<std::chrono::system_clock> lastCacheTime;
 std::atomic<bool> keepRunning(true);
 
@@ -94,6 +95,8 @@ void TryWriteToCache() {
     std::chrono::duration<double> elapsedSeconds = currentTime - lastCacheTime;
 
     if (elapsedSeconds.count() >= 5 && !cacheData.empty()) {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+
         FILE* cacheFile;
         fopen_s(&cacheFile, "cash.txt", "a");
         if (cacheFile) {
@@ -108,7 +111,7 @@ void TryWriteToCache() {
 void CacheWriteThread() {
     while (keepRunning) {
         std::this_thread::sleep_for(std::chrono::seconds(5));
-        std::lock_guard<std::mutex> lock(cacheMutex);
+
         TryWriteToCache();
     }
 }
@@ -210,8 +213,7 @@ int __cdecl main(void) {
 
     std::thread cacheThread(CacheWriteThread);
 
-    while (1) {
-        std::lock_guard<std::mutex> lock(recvMutex);
+    while (keepRunning) {
         ReceiveData(ClientSocket, recvbuf, recvbuflen);
 
         char directoryChoice[MAX_FILENAME_LEN];
@@ -225,20 +227,24 @@ int __cdecl main(void) {
         }
 
         GetDirectoryInfoByExtension(directoryChoice, extension, sendbuf, sizeof(sendbuf));
-
-        if (LogFile.is_open()) {
-            auto now = std::chrono::system_clock::now();
-            std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
-            struct tm localTime;
-            localtime_s(&localTime, &currentTime);
-            LogFile << std::put_time(&localTime, "%d/%m/%Y %H:%M:%S") << "\n";
-            LogFile << "Запит: " << recvbuf << "\nВідповідь:\n" << sendbuf << "\n\n";
+        {
+            std::lock_guard<std::mutex> lock(logMutex);
+            if (LogFile.is_open()) {
+                auto now = std::chrono::system_clock::now();
+                std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
+                struct tm localTime;
+                localtime_s(&localTime, &currentTime);
+                LogFile << std::put_time(&localTime, "%d/%m/%Y %H:%M:%S") << "\n";
+                LogFile << "Запит: " << recvbuf << "\nВідповідь:\n" << sendbuf << "\n\n";
+            }
         }
 
-        cacheData += sendbuf;
-        cacheData += "\n";
+        {
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            cacheData += sendbuf;
+            cacheData += "\n";
+        }
 
-        std::lock_guard<std::mutex> sendLock(sendMutex);
         SendData(ClientSocket, sendbuf);
     }
 
@@ -250,3 +256,4 @@ int __cdecl main(void) {
 
     return 0;
 }
+
