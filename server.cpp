@@ -6,6 +6,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <thread>
+#include <mutex>
+#include <fstream>
+#include <chrono>
+#include <atomic>
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -16,6 +21,12 @@
 #define DIRECTORY1 L"E:\\Операційні системи\\Лабораторні\\Лаб.9\\durektoriya1\\*"
 #define DIRECTORY2 L"E:\\Операційні системи\\Лабораторні\\Лаб.9\\durektoriya2\\*"
 #define DIRECTORY3 L"E:\\Операційні системи\\Лабораторні\\Лаб.9\\durektoriya3\\*"
+
+std::string cacheData;
+std::mutex cacheMutex;
+std::ofstream infoFile("information.txt", std::ios::app);
+std::chrono::time_point<std::chrono::system_clock> lastCacheTime;
+std::atomic<bool> keepRunning(true);
 
 void GetDirectoryInfoByExtension(const wchar_t* dirPath, const char* extension, char* buffer, size_t bufferSize) {
     WIN32_FIND_DATAW findFileData;
@@ -32,7 +43,8 @@ void GetDirectoryInfoByExtension(const wchar_t* dirPath, const char* extension, 
     do {
         if (!(findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
             char fileName[MAX_FILENAME_LEN];
-            wcstombs_s(NULL, fileName, findFileData.cFileName, _TRUNCATE);
+            wcstombs_s(NULL, fileName, findFileData.cFileName, MAX_FILENAME_LEN);
+            fileName[MAX_FILENAME_LEN - 1] = '\0';
 
             if (strlen(fileName) > strlen(extension) &&
                 strcmp(fileName + strlen(fileName) - strlen(extension), extension) == 0) {
@@ -64,12 +76,27 @@ void GetDirectoryInfoByExtension(const wchar_t* dirPath, const char* extension, 
     }
 }
 
-void WriteToCache(const char* data) {
-    FILE* file;
-    fopen_s(&file, "cash.txt", "a");
-    if (file) {
-        fprintf(file, "%s\n", data);
-        fclose(file);
+void TryWriteToCache() {
+    auto currentTime = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsedSeconds = currentTime - lastCacheTime;
+
+    if (elapsedSeconds.count() >= 5 && !cacheData.empty()) {
+        FILE* cacheFile;
+        fopen_s(&cacheFile, "cash.txt", "a");
+        if (cacheFile) {
+            fprintf(cacheFile, "%s", cacheData.c_str());
+            fclose(cacheFile);
+        }
+        cacheData.clear();
+        lastCacheTime = currentTime;
+    }
+}
+
+void CacheWriteThread() {
+    while (keepRunning) {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        TryWriteToCache();
     }
 }
 
@@ -87,6 +114,8 @@ int __cdecl main(void) {
     char recvbuf[DEFAULT_BUFLEN];
     char sendbuf[DEFAULT_BUFLEN];
     int recvbuflen = DEFAULT_BUFLEN;
+
+    lastCacheTime = std::chrono::system_clock::now();
 
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != 0) {
@@ -145,8 +174,10 @@ int __cdecl main(void) {
 
     closesocket(ListenSocket);
 
+    std::thread cacheThread(CacheWriteThread);
+
     while (1) {
-        iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
+        iResult = recv(ClientSocket, recvbuf, recvbuflen - 1, 0);
         if (iResult > 0) {
             recvbuf[iResult] = '\0';
             printf("Отримано повідомлення: %s\n", recvbuf);
@@ -166,7 +197,14 @@ int __cdecl main(void) {
             }
 
             GetDirectoryInfoByExtension(dirPath, extension, sendbuf, sizeof(sendbuf));
-            WriteToCache(sendbuf);
+
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            if (infoFile.is_open()) {
+                infoFile << "Запит: " << recvbuf << "\nВідповідь:\n" << sendbuf << "\n\n";
+            }
+
+            cacheData += sendbuf;
+            cacheData += "\n";
 
             iResult = send(ClientSocket, sendbuf, (int)strlen(sendbuf), 0);
             if (iResult == SOCKET_ERROR) {
@@ -181,8 +219,10 @@ int __cdecl main(void) {
             printf("recv завершився з помилкою: %d\n", WSAGetLastError());
             break;
         }
-        Sleep(5000);
     }
+
+    keepRunning = false;
+    cacheThread.join();
 
     closesocket(ClientSocket);
     WSACleanup();
