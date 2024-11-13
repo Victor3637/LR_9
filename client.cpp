@@ -5,11 +5,57 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <thread>
+#include <mutex>
 
 #pragma comment(lib, "Ws2_32.lib")
 
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
+
+std::mutex socketMutex;
+
+void SendDirectoryRequest(SOCKET ConnectSocket, int directoryChoice, const char* fileExtension) {
+    char message[DEFAULT_BUFLEN];
+    snprintf(message, sizeof(message), "%d%s", directoryChoice, fileExtension);
+
+    std::lock_guard<std::mutex> lock(socketMutex);
+
+    int iResult = send(ConnectSocket, message, (int)strlen(message), 0);
+    if (iResult == SOCKET_ERROR) {
+        printf("send завершився з помилкою: %d\n", WSAGetLastError());
+        return;
+    }
+    printf("Надіслано запит: директорія %d, розширення %s\n", directoryChoice, fileExtension);
+
+    char recvbuf[DEFAULT_BUFLEN];
+    iResult = recv(ConnectSocket, recvbuf, DEFAULT_BUFLEN - 1, 0);
+    if (iResult > 0) {
+        recvbuf[iResult] = '\0';
+        printf("Отримано дані:\n%s\n", recvbuf);
+    }
+    else if (iResult == 0) {
+        printf("З'єднання закрито\n");
+    }
+    else {
+        printf("recv завершився з помилкою: %d\n", WSAGetLastError());
+    }
+}
+
+void ClientProcess(SOCKET ConnectSocket) {
+    int directories[] = { 1, 2, 3 };
+    const char* extensions[] = { ".txt", ".jpg", ".exe", ".cpp" };
+
+    srand((unsigned int)time(NULL) + GetCurrentThreadId());
+
+    for (int i = 0; i < 20; i++) {
+        int directoryChoice = directories[rand() % 3];
+        const char* fileExtension = extensions[rand() % 4];
+
+        SendDirectoryRequest(ConnectSocket, directoryChoice, fileExtension);
+        Sleep(1000);
+    }
+}
 
 int __cdecl main() {
     SetConsoleCP(1251);
@@ -18,14 +64,7 @@ int __cdecl main() {
     WSADATA wsaData;
     SOCKET ConnectSocket = INVALID_SOCKET;
     struct addrinfo* result = NULL, * ptr = NULL, hints;
-    char recvbuf[DEFAULT_BUFLEN];
     int iResult;
-    int recvbuflen = DEFAULT_BUFLEN;
-
-    srand((unsigned int)time(NULL));
-
-    int directories[] = { 1, 2, 3 };
-    const char* extensions[] = { ".txt", ".jpg", ".exe", ".cpp" };
 
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != 0) {
@@ -71,36 +110,11 @@ int __cdecl main() {
         return 1;
     }
 
-    for (int i = 0; i < 10; i++) {
-        int directoryChoice = directories[rand() % 3];
-        const char* fileExtension = extensions[rand() % 4];
+    std::thread process1(ClientProcess, ConnectSocket);
+    std::thread process2(ClientProcess, ConnectSocket);
 
-        char message[DEFAULT_BUFLEN];
-        snprintf(message, sizeof(message), "%d%s", directoryChoice, fileExtension);
-
-        iResult = send(ConnectSocket, message, (int)strlen(message), 0);
-        if (iResult == SOCKET_ERROR) {
-            printf("send завершився з помилкою: %d\n", WSAGetLastError());
-            closesocket(ConnectSocket);
-            WSACleanup();
-            return 1;
-        }
-        printf("Надіслано запит: директорія %d, розширення %s\n", directoryChoice, fileExtension);
-
-        iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
-        if (iResult > 0) {
-            recvbuf[iResult] = '\0';
-            printf("Отримано дані:\n%s\n", recvbuf);
-        }
-        else if (iResult == 0) {
-            printf("З'єднання закрито\n");
-            break;
-        }
-        else {
-            printf("recv завершився з помилкою: %d\n", WSAGetLastError());
-            break;
-        }
-    }
+    process1.join();
+    process2.join();
 
     closesocket(ConnectSocket);
     WSACleanup();
