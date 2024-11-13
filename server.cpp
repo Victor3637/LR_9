@@ -100,6 +100,8 @@ void CacheWriteThread() {
     }
 }
 
+
+
 int __cdecl main(void) {
     SetConsoleCP(1251);
     SetConsoleOutputCP(1251);
@@ -203,6 +205,7 @@ int __cdecl main(void) {
                 infoFile << "Запит: " << recvbuf << "\nВідповідь:\n" << sendbuf << "\n\n";
             }
 
+            
             cacheData += sendbuf;
             cacheData += "\n";
 
@@ -229,3 +232,14 @@ int __cdecl main(void) {
 
     return 0;
 }
+
+
+
+
+
+// hdsjfhalkjfhuh48hfaj;oohfhjahkuhugu4fu
+
+
+
+
+
