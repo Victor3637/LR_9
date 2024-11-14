@@ -11,6 +11,7 @@
 #include <fstream>
 #include <chrono>
 #include <atomic>
+#include <vector>
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -27,6 +28,7 @@ std::mutex cacheMutex;
 std::ofstream infoFile("information.txt", std::ios::app);
 std::chrono::time_point<std::chrono::system_clock> lastCacheTime;
 std::atomic<bool> keepRunning(true);
+std::vector<std::thread> clientThreads;
 
 void GetDirectoryInfoByExtension(const wchar_t* dirPath, const char* extension, char* buffer, size_t bufferSize) {
     WIN32_FIND_DATAW findFileData;
@@ -82,7 +84,7 @@ void TryWriteToCache() {
 
     if (elapsedSeconds.count() >= 5 && !cacheData.empty()) {
         FILE* cacheFile;
-        fopen_s(&cacheFile, "cash.txt", "a");
+        fopen_s(&cacheFile, "cash.txt", "w");
         if (cacheFile) {
             fprintf(cacheFile, "%s", cacheData.c_str());
             fclose(cacheFile);
@@ -100,6 +102,61 @@ void CacheWriteThread() {
     }
 }
 
+void HandleClient(SOCKET ClientSocket) {
+    char recvbuf[DEFAULT_BUFLEN];
+    char sendbuf[DEFAULT_BUFLEN];
+    int recvbuflen = DEFAULT_BUFLEN;
+    int iResult;
+
+    while (true) {
+        iResult = recv(ClientSocket, recvbuf, recvbuflen - 1, 0);
+        if (iResult > 0) {
+            recvbuf[iResult] = '\0';
+            printf("Отримано повідомлення: %s\n", recvbuf);
+
+            int directoryChoice = recvbuf[0] - '0';
+            const char* extension = recvbuf + 1;
+
+            const wchar_t* dirPath;
+            switch (directoryChoice) {
+            case 1: dirPath = DIRECTORY1; break;
+            case 2: dirPath = DIRECTORY2; break;
+            case 3: dirPath = DIRECTORY3; break;
+            default:
+                snprintf(sendbuf, sizeof(sendbuf), "Неправильний вибір каталогу.");
+                send(ClientSocket, sendbuf, (int)strlen(sendbuf), 0);
+                continue;
+            }
+
+            GetDirectoryInfoByExtension(dirPath, extension, sendbuf, sizeof(sendbuf));
+
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            if (infoFile.is_open()) {
+                infoFile << "Запит: " << recvbuf << "\nВідповідь:\n" << sendbuf << "\n\n";
+            }
+
+            cacheData += sendbuf;
+            cacheData += "\n";
+
+            iResult = send(ClientSocket, sendbuf, (int)strlen(sendbuf), 0);
+            if (iResult == SOCKET_ERROR) {
+                printf("send завершився з помилкою: %d\n", WSAGetLastError());
+                break;
+            }
+        }
+        else if (iResult == 0) {
+            printf("З'єднання закрито клієнтом\n");
+            break;
+        }
+        else {
+            printf("recv завершився з помилкою: %d\n", WSAGetLastError());
+            break;
+        }
+    }
+
+    closesocket(ClientSocket);
+}
+
 int __cdecl main(void) {
     SetConsoleCP(1251);
     SetConsoleOutputCP(1251);
@@ -107,13 +164,8 @@ int __cdecl main(void) {
     int iResult;
 
     SOCKET ListenSocket = INVALID_SOCKET;
-    SOCKET ClientSocket = INVALID_SOCKET;
     struct addrinfo* result = NULL;
     struct addrinfo hints = { 0 };
-
-    char recvbuf[DEFAULT_BUFLEN];
-    char sendbuf[DEFAULT_BUFLEN];
-    int recvbuflen = DEFAULT_BUFLEN;
 
     lastCacheTime = std::chrono::system_clock::now();
 
@@ -164,67 +216,28 @@ int __cdecl main(void) {
 
     printf("Сервер очікує підключення...\n");
 
-    ClientSocket = accept(ListenSocket, NULL, NULL);
-    if (ClientSocket == INVALID_SOCKET) {
-        printf("accept завершився з помилкою: %d\n", WSAGetLastError());
-        closesocket(ListenSocket);
-        WSACleanup();
-        return 1;
-    }
-
-    closesocket(ListenSocket);
-
     std::thread cacheThread(CacheWriteThread);
 
-    while (1) {
-        iResult = recv(ClientSocket, recvbuf, recvbuflen - 1, 0);
-        if (iResult > 0) {
-            recvbuf[iResult] = '\0';
-            printf("Отримано повідомлення: %s\n", recvbuf);
-
-            int directoryChoice = recvbuf[0] - '0';
-            const char* extension = recvbuf + 1;
-
-            const wchar_t* dirPath;
-            switch (directoryChoice) {
-            case 1: dirPath = DIRECTORY1; break;
-            case 2: dirPath = DIRECTORY2; break;
-            case 3: dirPath = DIRECTORY3; break;
-            default:
-                snprintf(sendbuf, sizeof(sendbuf), "Неправильний вибір каталогу.");
-                send(ClientSocket, sendbuf, (int)strlen(sendbuf), 0);
-                continue;
-            }
-
-            GetDirectoryInfoByExtension(dirPath, extension, sendbuf, sizeof(sendbuf));
-
-            std::lock_guard<std::mutex> lock(cacheMutex);
-            if (infoFile.is_open()) {
-                infoFile << "Запит: " << recvbuf << "\nВідповідь:\n" << sendbuf << "\n\n";
-            }
-
-            cacheData += sendbuf;
-            cacheData += "\n";
-
-            iResult = send(ClientSocket, sendbuf, (int)strlen(sendbuf), 0);
-            if (iResult == SOCKET_ERROR) {
-                printf("send завершився з помилкою: %d\n", WSAGetLastError());
-            }
+    while (keepRunning) {
+        SOCKET ClientSocket = accept(ListenSocket, NULL, NULL);
+        if (ClientSocket == INVALID_SOCKET) {
+            printf("accept завершився з помилкою: %d\n", WSAGetLastError());
+            continue;
         }
-        else if (iResult == 0) {
-            printf("З'єднання закрито клієнтом\n");
-            break;
-        }
-        else {
-            printf("recv завершився з помилкою: %d\n", WSAGetLastError());
-            break;
-        }
+
+        clientThreads.emplace_back(HandleClient, ClientSocket);
     }
 
     keepRunning = false;
     cacheThread.join();
 
-    closesocket(ClientSocket);
+    for (auto& th : clientThreads) {
+        if (th.joinable()) {
+            th.join();
+        }
+    }
+
+    closesocket(ListenSocket);
     WSACleanup();
 
     return 0;
